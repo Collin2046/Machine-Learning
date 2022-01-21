@@ -1,0 +1,1515 @@
+---
+title: "Final_Project_Kelin_He"
+author: Kelin He
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, load_tidyverse}
+library(tidyverse)
+```
+```{r, load_somepackages}
+library(corrplot)
+library(coefplot)
+library(caret)
+library(randomForest)
+library(gbm)
+```
+
+
+
+## Part 1: Exploration
+
+
+load small data
+```{r,one}
+df_start <- readr::read_csv('small_train_data.csv', col_names = TRUE)
+```
+summary data
+
+```{r,two}
+summary(df_start)
+glimpse(df_start)
+```
+
+
+
+```{r,visulazition_small}
+small_x_colname <- colnames(df_start)
+
+df_start %>% 
+  select(all_of(small_x_colname)) %>% 
+  tibble::rowid_to_column() %>% 
+  select(-"response") %>%
+  pivot_longer(!c("rowid")) %>% 
+  ggplot(mapping = aes(x = value)) +
+  geom_histogram(bins = 20) +
+  facet_wrap(~name , scales = "free") +
+  theme_bw() +
+  theme(axis.text.y = element_blank())
+```
+```{r,vis_output}
+df_start %>% ggplot()+geom_histogram(mapping = aes(x=response),bins=30)
+```
+```{r,readbigdata_1}
+train_x <- readr::read_csv("train_input_set_x.csv", col_names = TRUE)
+```
+
+
+
+```{r,vis_dis_x}
+big_x_colnames <- colnames(train_x)
+
+train_x %>% 
+  select(all_of(big_x_colnames)) %>% 
+  tibble::rowid_to_column() %>% 
+  select(-"run_id") %>%
+  pivot_longer(!c("rowid")) %>% 
+  ggplot(mapping = aes(x = value)) +
+  geom_histogram(bins = 50) +
+  facet_wrap(~name , scales = "free") +
+  theme_bw() +
+  theme(axis.text.y = element_blank())
+```
+
+
+
+
+```{r,readbigdata2}
+train_v <- readr::read_csv("train_input_set_v.csv", col_names = TRUE)
+```
+
+```{r,vis_dis_v}
+big_v_colname <- colnames(train_v)
+train_v %>% 
+  select(all_of(big_v_colname)) %>% 
+  # tibble::rowid_to_column() %>% 
+  pivot_longer(!c("run_id")) %>% 
+  ggplot(mapping = aes(x = value)) +
+  geom_histogram(bins = 50) +
+  facet_wrap(~name, scales = "free") +
+  theme_bw() +
+  theme(axis.text.y = element_blank())
+```
+
+```{r,load response}
+train_outputs <- readr::read_csv("train_outputs.csv", col_names = TRUE)
+```
+
+```{r,vis_bigoutput}
+train_outputs %>% ggplot() + geom_histogram(mapping = aes(x=response),bins=30)
+```
+
+```{r,event&non_event}
+train_outputs %>% ggplot()+geom_bar(mapping = aes(x=outcome))
+```
+
+```{r,combine_x_regression}
+ready_x_A <- train_x %>% 
+  left_join(train_outputs, by = 'run_id') %>% 
+  select(-run_id, -outcome)
+
+ready_x_A %>% glimpse()
+```
+```{r,combine_x_binary}
+ready_x_B <- train_x %>% 
+  left_join(train_outputs, by = 'run_id') %>% 
+  select(-run_id, -response) %>% 
+  mutate(outcome = factor(outcome, levels = c("event", "non_event")))
+
+ready_x_B %>% glimpse()
+```
+
+
+```{r,combine_v_regression}
+ready_v_A <- train_v %>% 
+  left_join(train_outputs, by = 'run_id') %>% 
+  select(-run_id, -outcome)
+
+ready_v_A %>% glimpse()
+```
+
+```{r,combine_v_binary}
+ready_v_B <- train_v %>% 
+  left_join(train_outputs, by = 'run_id') %>% 
+  select(-run_id, -response) %>% 
+  mutate(outcome = factor(outcome, levels = c("event", "non_event")))
+
+ready_v_B %>% glimpse()
+```
+
+```{r,samlldata_distribution}
+df_start %>% tibble::rowid_to_column("obs_id") %>% 
+  pivot_longer(!c("obs_id", "response")) %>% ggplot(mapping = aes(x=value)) + geom_point(mapping = aes(y=response)) + facet_wrap(~name)
+```
+
+```{r,bigdata_x_distribution}
+ready_x_A %>% select(x07,x09,x10,x11,x21,response) %>% tibble::rowid_to_column("obs_id") %>% 
+  pivot_longer(!c("obs_id", "response")) %>% ggplot(mapping = aes(x=value)) + geom_point(mapping = aes(y=response)) + facet_wrap(~name)
+```
+```{r,compare_output_small}
+df_start %>% select(response) %>% tibble::rowid_to_column("obs_id") %>% ggplot(mapping = aes(x=obs_id)) + geom_point(mapping = aes(y=response))
+```
+```{r,compare_output_big}
+ready_x_A %>% select(response) %>% tibble::rowid_to_column("obs_id") %>% ggplot(mapping = aes(x=obs_id)) + geom_point(mapping = aes(y=response))
+```
+
+```{r,breaking_x&v}
+ready_x_B_event <- ready_x_B %>% filter(outcome == "event")
+ready_x_B_non_event <- ready_x_B %>% filter(outcome == "non_event")
+ready_v_B_event <- ready_v_B %>% filter(outcome == "event")
+ready_v_B_non_event <- ready_v_B %>% filter(outcome == "non_event")
+```
+
+```{r,vis_x_input_event}
+ready_x_B_event %>% 
+  select(-outcome) %>% 
+  tibble::rowid_to_column("obs_id") %>% 
+  pivot_longer(!c("obs_id")) %>% 
+  ggplot(mapping = aes(x = value)) +
+  geom_histogram(bins = 50) +
+  facet_wrap(~name, scales = "free") +
+  theme_bw() +
+  theme(axis.text.y = element_blank())
+```
+
+```{r,vis_x_input_non_event}
+ready_x_B_non_event %>% 
+  select(-outcome) %>% 
+  tibble::rowid_to_column("obs_id") %>% 
+  pivot_longer(!c("obs_id")) %>% 
+  ggplot(mapping = aes(x = value)) +
+  geom_histogram(bins = 50) +
+  facet_wrap(~name, scales = "free") +
+  theme_bw() +
+  theme(axis.text.y = element_blank())
+```
+
+```{r,vis_v_input_event}
+ready_v_B_non_event %>% 
+  select(-outcome) %>% 
+  tibble::rowid_to_column("obs_id") %>% 
+  pivot_longer(!c("obs_id")) %>% 
+  ggplot(mapping = aes(x = value)) +
+  geom_histogram(bins = 50) +
+  facet_wrap(~name, scales = "free") +
+  theme_bw() +
+  theme(axis.text.y = element_blank())
+```
+
+```{r,vis_v_input_non_event}
+ready_v_B_non_event %>% 
+  select(-outcome) %>% 
+  tibble::rowid_to_column("obs_id") %>% 
+  pivot_longer(!c("obs_id")) %>% 
+  ggplot(mapping = aes(x = value)) +
+  geom_histogram(bins = 50) +
+  facet_wrap(~name, scales = "free") +
+  theme_bw() +
+  theme(axis.text.y = element_blank())
+```
+
+```{r,connet_x&output}
+response_event<- train_outputs %>% select(response,outcome) %>% filter(outcome=="event")
+response_non_event <- train_outputs %>% select(response,outcome) %>% filter(outcome=="non_event")
+```
+
+```{r,vis_response_event}
+response_event %>% ggplot(mapping = aes(x = response)) + geom_histogram(bins=30)
+```
+```{r,vis_response_non_event}
+response_non_event %>% ggplot(mapping = aes(x = response)) + geom_histogram(bins=30)
+```
+
+
+```{r,correlation_small}
+corre_small <- df_start %>% cor()
+corre_small
+corrplot(corre_small,type='upper')
+```
+
+
+
+
+
+```{r, correlation_x}
+train_x_combine <- train_x %>% 
+  left_join(train_outputs, by = 'run_id')
+train_x_combine %>%select(2:45) %>%cor() %>% corrplot("square",type="upper") 
+```
+
+Yes, the relationship between response and inputs in small data set is consistent and same with relationship between response and inputs in train_x data set
+
+
+
+
+```{r,correlation_v}
+train_v_combine <- train_v %>% 
+  left_join(train_outputs, by = 'run_id')
+train_v_combine %>%select(2:42,43) %>%cor() %>% corrplot("square",type="upper") 
+```
+
+
+## Part 2: small problem inear models-A
+
+
+set up formula for non-Bayesian linear model
+```{r,small_01}
+set.seed(1997)
+mod1_small_nonBayes <- lm(response ~ x07+x09+x10+x11+x21,data = df_start)
+```
+
+```{r,small_02}
+set.seed(1997)
+mod2_small_nonByes <- lm(response ~ x07*x09 + x07*x10 + x07*x11 + x07*x21 
+            + x09*x10 + x09*x11 + x09*x21 +x10*x11 + x10*x21 + x11*x21,data = df_start)
+```
+
+```{r,small_03}
+set.seed(1997)
+mod3_small_nonByes <- lm(response ~ x07+x09+x10+x11+x21+I(x07^2)+I(x09^2)+I(x10^2)+I(x11^2)+I(x21^2),data = df_start)
+```
+
+```{r,small_04}
+set.seed(1997)
+mod4_small_nonByes <- lm(response ~ (splines::ns(x09,5)*x11),data = df_start)
+```
+
+```{r,small_05}
+set.seed(1997)
+mod5_small_nonByes <- lm(response ~ x09*x11,data = df_start)
+```
+
+```{r,small_06}
+set.seed(1997)
+mod6_small_nonByes <- lm(response ~ ((x09+I(x09^2))*x11),data = df_start)
+```
+
+
+```{r,statistics}
+broom::glance(mod1_small_nonBayes)
+broom::glance(mod2_small_nonByes)
+broom::glance(mod3_small_nonByes)
+broom::glance(mod4_small_nonByes)
+broom::glance(mod5_small_nonByes)
+broom::glance(mod6_small_nonByes)
+```
+mod4 is the best model. Nonetheless, the performance of model4 and model6 is very close.
+
+
+```{r,coefplot1}
+coefplot(mod4_small_nonByes)
+summary(mod4_small_nonByes)
+```
+
+```{r,coefplot2}
+coefplot(mod6_small_nonByes)
+summary(mod6_small_nonByes)
+```
+
+Bayes model
+set design matrix
+```{r,bayesmod1}
+mod4_designMat <- model.matrix(response ~ (splines::ns(x09,5)*x11),data = df_start)
+```
+
+```{r,bayesmod2}
+mod6_designMat <- model.matrix(response ~ ((x09+I(x09^2))*x11),data = df_start)
+```
+
+
+
+set for information list
+
+```{r,info1}
+info_mod4 <- list(
+  yobs = df_start$response,
+  design_matrix = mod4_designMat,
+  mu_beta = 0,
+  tau_beta = 1,
+  sigma_rate = 1
+)
+```
+
+
+```{r,info2}
+info_mod6 <- list(
+  yobs = df_start$response,
+  design_matrix = mod6_designMat,
+  mu_beta = 0,
+  tau_beta = 1,
+  sigma_rate = 1
+)
+```
+
+
+
+set log-post function
+```{r,lm_logpost}
+lm_logpost <- function(unknowns, my_info)
+{
+  
+  length_beta <- ncol(my_info$design_matrix)
+  
+  
+  beta_v <- unknowns[1:length_beta]
+  
+  
+  lik_varphi <- unknowns[length_beta + 1]
+  
+  
+  lik_sigma <- exp(lik_varphi)
+  
+  
+  X <- my_info$design_matrix
+  
+  
+  mu <- as.vector(X %*% as.matrix(beta_v))
+  
+  
+  log_lik <- sum(dnorm(x = my_info$yobs,
+                       mean = as.numeric(mu),
+                       sd = lik_sigma,
+                       log = TRUE))
+  
+  
+  log_prior_beta <- sum(dnorm(x = beta_v, 
+                               mean = my_info$mu_beta,
+                              sd = my_info$tau_beta,
+                              log = TRUE))
+  
+  log_prior_sigma <- dexp(x = lik_sigma, rate = my_info$sigma_rate, log=TRUE)
+  
+  
+  log_prior <- log_prior_beta + log_prior_sigma
+  
+  
+  log_derive_adjust <- lik_varphi
+  
+  
+  return(log_lik + log_prior + log_derive_adjust)
+}
+```
+
+
+```{r,laplacefuc}
+my_laplace <- function(start_guess, logpost_func, ...)
+{
+  
+  fit <- optim(start_guess,
+               logpost_func,
+               gr = NULL,
+               ...,
+               method = "BFGS",
+               hessian = TRUE,
+               control = list(fnscale = -1, maxit = 1001))
+  
+  mode <- fit$par
+  post_var_matrix <- -solve(fit$hessian)
+  p <- length(mode)
+  int <- p/2 * log(2 * pi) + 0.5 * log(det(post_var_matrix)) + logpost_func(mode, ...)
+  
+  list(mode = mode,
+       var_matrix = post_var_matrix,
+       log_evidence = int,
+       converge = ifelse(fit$convergence == 0,
+                         "YES", 
+                         "NO"),
+       iter_counts = as.numeric(fit$counts[1]))
+}
+```
+
+
+
+```{r,calculation1}
+mod4_lap_result <- my_laplace(rep(0,ncol(mod4_designMat)+1),lm_logpost,info_mod4)
+```
+
+
+```{r,fcalculation2}
+mod6_lap_result <- my_laplace(rep(0,ncol(mod6_designMat)+1),lm_logpost,info_mod6)
+```
+
+
+
+```{r,log_based}
+weight_mod4_byes = exp(mod4_lap_result$log_evidence)/(exp(mod4_lap_result$log_evidence)+exp(mod6_lap_result$log_evidence))
+weight_mod6_byes = exp(mod6_lap_result$log_evidence)/(exp(mod4_lap_result$log_evidence)+exp(mod6_lap_result$log_evidence))
+weight_mod4_byes
+weight_mod6_byes
+exp(mod6_lap_result$log_evidence) / exp(mod4_lap_result$log_evidence) 
+```
+
+mod6_byes seems more likely be the best model
+
+```{r,coefs}
+post_coefs <- function(post_means, post_sds, xnames)
+{
+  tibble::tibble(
+    mu = post_means,
+    sd = post_sds,
+    x = xnames
+  ) %>% 
+    mutate(x = factor(x, levels = xnames)) %>% 
+    ggplot(mapping = aes(x = x)) +
+    geom_hline(yintercept = 0, color = 'grey', linetype = 'dashed') +
+    geom_point(mapping = aes(y = mu)) +
+    geom_linerange(mapping = aes(ymin = mu - 2 * sd,
+                                 ymax = mu + 2 * sd,
+                                 group = x)) +
+    labs(x = 'feature', y = 'coefficient value') +
+    coord_flip() +
+    theme_bw()
+}
+```
+
+```{r,postcoef_plot1}
+mod4_lap_para_plot <- post_coefs(mod4_lap_result$mode[1:ncol(mod4_designMat)],sqrt(diag(mod4_lap_result$var_matrix))[1:ncol(mod4_designMat)],colnames(mod4_designMat))
+mod4_lap_para_plot
+```
+
+```{r,postcoef_plot2}
+mod6_lap_para_plot <- post_coefs(mod6_lap_result$mode[1:ncol(mod6_designMat)],sqrt(diag(mod6_lap_result$var_matrix))[1:ncol(mod6_designMat)],colnames(mod6_designMat))
+mod6_lap_para_plot
+```
+
+
+```{r,compare}
+broom::glance(mod6_small_nonByes)$sigma
+exp(mod6_lap_result$mode[length(mod6_lap_result$mod)])
+```
+The two $\sigma$ are very close.
+
+```{r, generate_sample}
+generate_lm_post_samples <- function(mvn_result, length_beta, num_samples)
+{
+  MASS::mvrnorm(n = num_samples,
+                mu = mvn_result$mode,
+                Sigma = mvn_result$var_matrix) %>% 
+    as.data.frame() %>% tibble::as_tibble() %>% 
+    purrr::set_names(c(sprintf("beta_%02d", 0:(length_beta-1)), "varphi")) %>% 
+    mutate(sigma = exp(varphi))
+}
+```
+
+
+
+```{r, pred}
+post_lm_pred_samples <- function(Xnew, Bmat, sigma_vector)
+{
+
+  M <- nrow(Xnew)
+  
+  S <- nrow(Bmat)
+  
+ 
+  Umat <- Xnew %*% t(Bmat)
+  
+  
+  Rmat <- matrix(rep(sigma_vector, M),M , byrow = TRUE)
+  
+  
+  Zmat <- matrix(rnorm(M*S),M , byrow = TRUE)
+  
+  
+  Ymat <- Umat+Rmat*Zmat
+  
+ 
+  list(Umat = Umat, Ymat = Ymat)
+}
+```
+
+```{r, pred2}
+make_post_lm_pred <- function(Xnew, post)
+{
+  Bmat <- post %>% select(starts_with("beta_")) %>% as.matrix()
+  
+  sigma_vector <- post %>% pull(sigma)
+  
+  post_lm_pred_samples(Xnew, Bmat, sigma_vector)
+}
+```
+
+
+```{r, calculate and prepare plot}
+summarize_lm_pred_from_laplace <- function(mvn_result, Xtest, num_samples)
+{
+  
+  post <- generate_lm_post_samples(mvn_result, ncol(Xtest), num_samples)
+  
+  
+  pred_test <- make_post_lm_pred(Xtest, post)
+  
+  mu_avg <- rowMeans(pred_test$Umat)
+  y_avg <- rowMeans(pred_test$Ymat)
+  
+  
+  mu_lwr <- apply(pred_test$Umat, 1, stats::quantile, probs = 0.025)
+  mu_upr <- apply(pred_test$Umat, 1, stats::quantile, probs = 0.975)
+  y_lwr <- apply(pred_test$Ymat, 1, stats::quantile, probs = 0.025)
+  y_upr <- apply(pred_test$Ymat, 1, stats::quantile, probs = 0.975)
+  
+  
+  tibble::tibble(
+    mu_avg = mu_avg,
+    mu_lwr = mu_lwr,
+    mu_upr = mu_upr,
+    y_avg = y_avg,
+    y_lwr = y_lwr,
+    y_upr = y_upr
+  ) %>% 
+    tibble::rowid_to_column("pred_id")
+}
+```
+
+
+
+```{r, viz_grid}
+viz_grid <- expand.grid(x09 = seq(0,1,length.out=101),
+                        x11 = seq(0,1,length.out=6),
+                        KEEP.OUT.ATTRS = FALSE,
+                        stringsAsFactors = FALSE) %>% 
+  as.data.frame() %>% tibble::as_tibble()
+```
+
+```{r, viz_grid2,eval=FALSE}
+viz_grid_2 <- expand.grid(x09 = seq(0,1,length.out=101),
+                        x11 = seq(0,1,length.out=6),
+                        KEEP.OUT.ATTRS = FALSE,
+                        stringsAsFactors = FALSE) %>% 
+  as.data.frame() %>% tibble::as_tibble()
+```
+
+
+
+```{r, make_tidy_predict_function}
+tidy_predict <- function(mod, xnew)
+{
+  pred_df <- predict(mod, xnew, interval = "confidence") %>% 
+    as.data.frame() %>% tibble::as_tibble() %>% 
+    dplyr::select(pred = fit, ci_lwr = lwr, ci_upr = upr) %>% 
+    bind_cols(predict(mod, xnew, interval = 'prediction') %>% 
+                as.data.frame() %>% tibble::as_tibble() %>% 
+                dplyr::select(pred_lwr = lwr, pred_upr = upr))
+  
+  xnew %>% bind_cols(pred_df)
+}
+```
+
+```{r,prediction_mod04_nonBayes}
+pred_mod04_nonbayes <- tidy_predict(mod4_small_nonByes,viz_grid)
+pred_mod04_nonbayes
+```
+
+
+```{r,plot_mod04_nonBayes}
+pred_mod04_nonbayes %>% 
+  ggplot(mapping = aes(x=x09))+geom_ribbon(mapping = aes(ymin=pred_lwr,ymax=pred_upr),fill='orange')+geom_ribbon(mapping = aes(ymin=ci_lwr,ymax=ci_upr),fill='grey')+facet_wrap(facets = ~x11,labeller = "label_both")+geom_line(mapping = aes(y=pred))
+```
+
+```{r,nonb_mod6}
+pred_mod06_nonbayes <- tidy_predict(mod6_small_nonByes,viz_grid)
+```
+
+```{r,plot_mod06_nonBayes}
+pred_mod06_nonbayes %>% 
+  ggplot(mapping = aes(x=x09))+geom_ribbon(mapping = aes(ymin=pred_lwr,ymax=pred_upr),fill='orange')+geom_ribbon(mapping = aes(ymin=ci_lwr,ymax=ci_upr),fill='grey')+facet_wrap(facets = ~x11,,labeller = "label_both")+geom_line(mapping = aes(y=pred))
+```
+
+```{r,pred_mat_mod04_Bayes}
+mat_viz_1 <- model.matrix( ~ (splines::ns(x09,5)*x11),data=viz_grid)
+```
+
+```{r,pred_mat_mod06_Bayes}
+mat_viz_2 <- model.matrix( ~ ((x09+I(x09^2))*x11),data=viz_grid)
+```
+
+```{r,pred_Bayes_mod04}
+post_pred_mod4_Bayes_summary <- summarize_lm_pred_from_laplace(mod4_lap_result,mat_viz_1,5000)
+```
+
+```{r,plot_mod4_bayes}
+post_pred_mod4_Bayes_summary %>% 
+  left_join(viz_grid %>% tibble::rowid_to_column("pred_id"),
+            by = 'pred_id')%>% 
+  ggplot(mapping = aes(x=x09))+geom_ribbon(mapping = aes(ymin=y_lwr,ymax=y_upr),fill='orange')+geom_ribbon(mapping = aes(ymin=mu_lwr,ymax=mu_upr),fill='grey')+facet_wrap(facets = ~x11,labeller = "label_both")+geom_line(mapping = aes(y=mu_avg))
+```
+
+```{r,pred_Bayes_mod06}
+post_pred_mod6_Bayes_summary <- summarize_lm_pred_from_laplace(mod6_lap_result,mat_viz_2,5000)
+```
+
+```{r,plot}
+post_pred_mod6_Bayes_summary %>% 
+  left_join(viz_grid %>% tibble::rowid_to_column("pred_id"),
+            by = 'pred_id')%>% 
+  ggplot(mapping = aes(x=x09))+geom_ribbon(mapping = aes(ymin=y_lwr,ymax=y_upr),fill='orange')+geom_ribbon(mapping = aes(ymin=mu_lwr,ymax=mu_upr),fill='grey')+facet_wrap(facets = ~x11,labeller = "label_both")+geom_line(mapping = aes(y=mu_avg))
+```
+Because the performance of non_Bayes model4 and non_Bayes model6 is so close. I use these two models and plus two Bayes models I fit above, Bayes models used the same formula using in non_Bayes model 4 and 6. The plot results are that their predictions all have the similar trends.
+I think the combination of x09 and x11 that both close to 1 minimizes the continuous response.
+
+## Part 3: complete regression problem
+
+```{r,set_control_para}
+my_ctrl <- trainControl(method="repeatedcv",number=5,repeats = 5)
+```
+
+```{r, set_evalu_para}
+my_metric <- "RMSE"
+```
+
+```{r, reg_mod1_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod1_additive <- train(response ~ ., data = ready_x_A, method="lm", trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r, reg_mod1_x_pred}
+reg_x_mod1_additive_pred <- predict(reg_x_mod1_additive, ready_x_A)
+```
+
+```{r,reg_mod2_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod2_pairwise <- train(response ~ .^2, data = ready_x_A, method="lm", trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod2_x_pred}
+reg_x_mod2_pairwise_pred <- predict(reg_x_mod2_pairwise, ready_x_A)
+```
+
+```{r,reg_mod3_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod3_best <- train(response ~ (x09+I(x09^2))*x11, data = ready_x_A, method="lm", trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod3_x_pred}
+reg_x_mod3_best_pred <- predict(reg_x_mod3_best, ready_x_A)
+```
+
+
+```{r,reg_mod4_elas_pairwise,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod4_elastic <- train(response ~.^2,data=ready_x_A,method='glmnet',trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod4_elas_pairwise_pred}
+reg_x_mod4_elastic_pred <- predict(reg_x_mod4_elastic, ready_x_A)
+```
+
+```{r,reg_mod5_elas_best,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod5_elastic <-caret::train(response ~ (x09+I(x09^2))*x11,data=ready_x_A,method='glmnet',trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod5_elas_best_pred}
+reg_x_mod5_elastic_pred <- predict(reg_x_mod5_elastic, ready_x_A)
+```
+
+```{r,reg_mod6_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod6_neuralnetwork <- train(response ~ ., data = ready_x_A, method="nnet", trControl=my_ctrl, metric=my_metric,preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod6_x_pred}
+reg_x_mod6_neuralnetwork_pred <- predict(reg_x_mod6_neuralnetwork, ready_x_A)
+```
+
+```{r,reg_mod7_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod7_rf <- caret::train(response ~ .,data=ready_x_A, method='rf',trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod7_x_pred}
+reg_x_mod7_rf_pred <- predict(reg_x_mod7_rf, ready_x_A)
+```
+
+```{r,reg_mod8_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod8_GBM <- caret::train(response ~ .,data=ready_x_A,method='gbm',trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod8_x_pred}
+reg_x_mod8_GBM_pred <- predict(reg_x_mod8_GBM, ready_x_A)
+```
+
+```{r,reg_mod9_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod9_knn <- caret::train(response ~ .,data=ready_x_A,method='knn',trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod9_x_pred}
+reg_x_mod9_knn_pred <- predict(reg_x_mod9_knn, ready_x_A)
+```
+
+```{r,reg_mod10_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_x_mod10_svm <- caret::train(response ~ .,data=ready_x_A,method='svmLinear',trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod10_x_pred}
+reg_x_mod10_knn_svm <- predict(reg_x_mod10_svm, ready_x_A)
+```
+
+```{r,RMSE_result}
+RMSE_result <- resamples(list(fit_01 = reg_x_mod1_additive,
+                              fit_02 = reg_x_mod2_pairwise,
+                              fit_03 = reg_x_mod3_best,
+                              fit_04 = reg_x_mod4_elastic,
+                              fit_05 = reg_x_mod5_elastic,
+                              fit_06 = reg_x_mod6_neuralnetwork,
+                              fit_07 = reg_x_mod7_rf,
+                              fit_08 = reg_x_mod8_GBM,
+                              fit_09 = reg_x_mod9_knn,
+                              fit_10 = reg_x_mod10_svm
+))
+
+```
+
+```{r,dotplot}
+dotplot(RMSE_result)
+```
+
+model8 is the best model, according to MAE RMSE R-squared result.
+
+```{r, reg_mod1_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_v_mod1_additive <- train(response ~ ., data = ready_v_A, method="lm", trControl=my_ctrl, metric=my_metric,preProcess=c('center', 'scale'))
+```
+
+```{r, reg_mod1_v_pred}
+reg_v_mod1_additive_pred <- predict(reg_v_mod1_additive,ready_v_A)
+```
+
+
+```{r,reg_mod2_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_v_mod2_pairwise <- train(response ~ .^2, data = ready_v_A, method="lm", trControl=my_ctrl, metric=my_metric,preProcess=c('center', 'scale'))
+```
+```{r,reg_mod2_v_pred}
+reg_v_mod2_pairwise_pred <- predict(reg_v_mod2_pairwise,ready_v_A)
+```
+
+```{r,reg_mod3_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_v_mod3_elastic <-caret::train(response ~.^2,data=ready_v_A,method='glmnet',trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod3_v_pred}
+reg_v_mod3_elastic_pred <- predict(reg_v_mod3_elastic, ready_v_A)
+```
+
+
+```{r,reg_mod4_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_v_mod4_elastic <-caret::train(response ~ (splines::ns(v09,5)*v11),data=ready_v_A,method='glmnet',trControl=my_ctrl,metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod4_v_pred}
+reg_v_mod4_elastic_pred <- predict(reg_v_mod4_elastic, ready_v_A)
+```
+
+
+```{r,reg_mod5_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_v_mod5_neuralnetwork <- train(response ~ ., data = ready_v_A, method="nnet", trControl=my_ctrl, metric=my_metric,preProcess=c('center', 'scale')) 
+```
+
+```{r,reg_mod5_v_pred}
+reg_v_mod5_neuralnetwork_pred <- predict(reg_v_mod5_neuralnetwork,ready_v_A)
+```
+
+```{r,reg_mod6_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_v_mod6_rf <- train(response ~ ., data = ready_v_A, method="rf", trControl=my_ctrl, metric=my_metric,preProcess=c('center', 'scale')) 
+```
+
+```{r,reg_mod6_v_pred}
+reg_v_mod6_rf_pred <- predict(reg_v_mod6_rf,ready_v_A)
+```
+
+```{r,reg_mod7_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_v_mod7_GBM <- train(response ~ ., data = ready_v_A, method="gbm", trControl=my_ctrl, metric=my_metric,preProcess=c('center', 'scale')) 
+```
+
+
+```{r,reg_mod7_v_pred}
+reg_v_mod7_GBM_pred <- predict(reg_v_mod7_GBM, ready_v_A)
+```
+
+```{r,reg_mod8_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_v_mod8_knn <- caret::train(response ~ .,data=ready_v_A,method='knn',trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod8_v_pred}
+reg_v_mod8_knn_pred <- predict(reg_v_mod8_knn, ready_v_A)
+```
+
+```{r,reg_mod9_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+reg_v_mod9_svm <- caret::train(response ~ .,data=ready_v_A,method='svmLinear',trControl=my_ctrl, metric=my_metric, preProcess=c('center', 'scale'))
+```
+
+```{r,reg_mod9_v_pred}
+reg_v_mod9_svm_pred <- predict(reg_v_mod9_svm, ready_v_A)
+```
+
+```{r,RMSE_result2}
+RMSE_result_2 <- resamples(list(fit_01 = reg_v_mod1_additive,
+fit_02 = reg_v_mod2_pairwise,
+fit_03 = reg_v_mod3_elastic,
+fit_04 = reg_v_mod4_elastic,
+fit_05 = reg_v_mod5_neuralnetwork,
+fit_06 = reg_v_mod6_rf,
+fit_07 = reg_v_mod7_GBM,
+fit_08 = reg_v_mod8_knn,
+fit_09 = reg_v_mod9_svm
+))
+```
+
+```{r,dotplot2}
+dotplot(RMSE_result_2)
+```
+
+according to the result,mod8 is the best regression model for x variable and mod6 is the best regression model for v variable.
+
+## Part 4 complete problem classification 
+
+
+```{r,class_mod1_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod1_logis_addtive <- caret::train(outcome ~ .,data = ready_x_B, method = "glm", 
+family = "binomial",metric = "Accuracy", trControl = my_ctrl, preProcess=c('center', 'scale'))
+```
+
+
+```{r,class_mod1_x_pred}
+class_x_mod1_logis_addtive_pred <- predict(class_x_mod1_logis_addtive,ready_x_B)
+class_x_mod1_logis_addtive_pred_prob <- predict(class_x_mod1_logis_addtive,ready_x_B,'prob')
+```
+
+
+```{r,class_mod2_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod2_logis_pairwise <- caret::train(outcome ~ .^2,data = ready_x_B, method = "glm", family = "binomial", trControl = my_ctrl, metric="Accuracy",preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod2_x_pred}
+class_x_mod2_logis_pairwise_pred <- predict(class_x_mod2_logis_pairwise,ready_x_B)
+class_x_mod2_logis_pairwise_pred_prob <- predict(class_x_mod2_logis_pairwise,ready_x_B,'prob')
+```
+
+```{r,class_mod3_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod3_elastic <- caret::train(outcome ~.^2,data=ready_x_B,method='glmnet',family = "binomial", trControl=my_ctrl, metric="Accuracy", preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod3_x_pred}
+class_x_mod3_elastic_pred <- predict(class_x_mod3_elastic,ready_x_B)
+class_x_mod3_elastic_pred_prob <- predict(class_x_mod3_elastic,ready_x_B,'prob')
+```
+
+```{r,class_mod4_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod4_elastic <- caret::train(outcome ~ (x09+I(x09^2))*x11,data=ready_x_B,method='glmnet', family = "binomial",trControl=my_ctrl, metric="Accuracy", preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod4_x_pred}
+class_x_mod4_elastic_pred <- predict(class_x_mod4_elastic,ready_x_B)
+class_x_mod4_elastic_pred_prob <- predict(class_x_mod4_elastic,ready_x_B,'prob')
+```
+
+```{r,class_mod5_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod5_neuralnet <- caret::train(outcome ~ .,data=ready_x_B,method='nnet',trControl=my_ctrl, metric="Accuracy", preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod5_x_pred}
+class_x_mod5_neuralnet_pred<- predict(class_x_mod5_neuralnet,ready_x_B)
+class_x_mod5_neuralnet_pred_prob <- predict(class_x_mod5_neuralnet,ready_x_B,'prob')
+```
+
+```{r,class_mod6_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod6_randomforest <- caret::train(outcome ~ .,data=ready_x_B,method='rf',trControl=my_ctrl, metric="Accuracy", preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod6_x_pred}
+class_x_mod6_randomforest_pred <- predict(class_x_mod6_randomforest,ready_x_B)
+class_x_mod6_randomforest_pred_prob <- predict(class_x_mod6_randomforest,ready_x_B,'prob')
+```
+
+```{r,class_mod7_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod7_GBM <- caret::train(outcome ~ .,data=ready_x_B,method='gbm',trControl=my_ctrl, metric="Accuracy", preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod7_x_pred}
+class_x_mod7_GBM_pred <- predict(class_x_mod7_GBM,ready_x_B)
+class_x_mod7_GBM_pred_prob <- predict(class_x_mod7_GBM,ready_x_B,'prob')
+```
+
+```{r,class_mod8_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod8_knn <- caret::train(outcome ~ .,data=ready_x_B,method='knn',trControl=my_ctrl, metric="Accuracy", preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod8_x_pred}
+class_x_mod8_knn_pred <- predict(class_x_mod8_knn, ready_x_B)
+class_x_mod8_knn_prob <- predict(class_x_mod8_knn, ready_x_B,'prob')
+```
+
+```{r,class_mod9_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod9_svm <- caret::train(outcome ~ .,data=ready_x_B,method='svmLinear',trControl=my_ctrl, metric="Accuracy", preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod9_x_pred}
+class_x_mod9_svm_pred <- predict(class_x_mod9_svm, ready_x_B)
+```
+
+
+```{r, acc_result}
+acc_results <- resamples(list(mod1 = class_x_mod1_logis_addtive,
+                              mod2 = class_x_mod2_logis_pairwise,
+                              mod3 = class_x_mod3_elastic,
+                              mod4 = class_x_mod4_elastic,
+                              mod5 = class_x_mod5_neuralnet,
+                              mod6 = class_x_mod6_randomforest,
+                              mod7 = class_x_mod7_GBM,
+                              mod8 = class_x_mod8_knn,
+                              mod9 = class_x_mod9_svm
+                              ))
+```
+
+```{r, summary_acc-}
+dotplot(acc_results)
+```
+
+```{r,class_mod1_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod1_logis_addtive <- train(outcome ~ .,data = ready_v_B, method = "glm", 
+             family = "binomial", trControl = my_ctrl, metric="Accuracy",preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod1_v_pred}
+class_v_mod1_logis_addtive_pred <- predict(class_v_mod1_logis_addtive,ready_v_B)
+class_v_mod1_logis_addtive_pred_prob <- predict(class_v_mod1_logis_addtive,ready_v_B,'prob')
+```
+
+```{r,class_mod2_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod2_logis_pairwise <- train(outcome ~ .^2,data = ready_v_B, method = "glm", 
+             family = "binomial", trControl = my_ctrl, metric="Accuracy",preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod2_v_pred}
+class_v_mod2_logis_pairwise_pred <- predict(class_v_mod2_logis_pairwise,ready_v_B)
+class_v_mod2_logis_pairwise_pred_prob <- predict(class_v_mod2_logis_pairwise,ready_v_B,'prob')
+```
+
+```{r,class_mod3_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod3_elastic <- train(outcome ~ .^2,data = ready_v_B, method = "glmnet", 
+             family = "binomial", trControl = my_ctrl, metric="Accuracy",preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod3_v_pred}
+class_v_mod3_elastic_pred <- predict(class_v_mod3_elastic,ready_v_B)
+class_v_mod3_elastic_pred_prob <- predict(class_v_mod3_elastic,ready_v_B,'prob')
+```
+
+```{r,class_mod4_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod4_elastic <- train(outcome ~ (v09+I(v09^2))*v11,data = ready_v_B, method = "glmnet", 
+             family = "binomial", trControl = my_ctrl, metric="Accuracy",preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod4_v_pred}
+class_v_mod4_elastic_pred <- predict(class_v_mod4_elastic,ready_v_B)
+class_v_mod4_elastic_pred_prob <- predict(class_v_mod4_elastic,ready_v_B,'prob')
+```
+
+```{r,class_mod5_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod5_neuralnet <- train(outcome ~ .,data = ready_v_B, method = "nnet", 
+             trControl = my_ctrl, metric="Accuracy",preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod5_v_pred}
+class_v_mod5_neuralnet_pred <- predict(class_v_mod5_neuralnet,ready_v_B)
+class_v_mod5_neuralnet_pred_prob <- predict(class_v_mod5_neuralnet,ready_v_B,'prob')
+```
+
+```{r,class_mod6_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod6_rf <- train(outcome ~ .,data = ready_v_B, method = "rf", 
+             trControl = my_ctrl, metric="Accuracy",preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod6_v_pred}
+class_v_mod6_rf_pred <- predict(class_v_mod6_rf,ready_v_B)
+class_v_mod6_rf_pred_prob <- predict(class_v_mod6_rf,ready_v_B,'prob')
+```
+
+```{r,class_mod7_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod7_GBM <- train(outcome ~ .,data = ready_v_B, method = "gbm", 
+             trControl = my_ctrl, metric="Accuracy",preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod7_v_pred}
+class_v_mod7_GBM_pred <- predict(class_v_mod7_GBM,ready_v_B)
+class_v_mod7_GBM_pred_prob <- predict(class_v_mod7_GBM,ready_v_B,'prob')
+```
+
+```{r,class_mod8_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod8_knn <- caret::train(outcome ~ .,data=ready_v_B,method='knn',trControl=my_ctrl, metric="Accuracy", preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod8_v_pred}
+class_v_mod8_knn_pred <- predict(class_v_mod8_knn, ready_v_B)
+class_v_mod8_knn_pred_prob <- predict(class_v_mod8_knn, ready_v_B,'prob')
+```
+
+```{r,class_mod9_v,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod9_svm <- caret::train(outcome ~ .,data=ready_v_B,method='svmLinear',trControl=my_ctrl, metric="Accuracy", preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod9_v_pred}
+class_v_mod9_svm_pred <- predict(class_v_mod9_svm, ready_v_B)
+```
+
+```{r, acc_result2}
+acc_results2 <- resamples(list(mod1 = class_v_mod1_logis_addtive,
+                              mod2 = class_v_mod2_logis_pairwise,
+                              mod3 = class_v_mod3_elastic,
+                              mod4 = class_v_mod4_elastic,
+                              mod5 = class_v_mod5_neuralnet,
+                              mod6 = class_v_mod6_rf,
+                              mod7 = class_v_mod7_GBM,
+                              mod8 = class_v_mod8_knn,
+                              mod9 = class_v_mod9_svm
+                              ))
+```
+
+```{r,summary_acc2}
+summary(acc_results2)
+dotplot(acc_results2)
+```
+
+```{r, set_roc_auc_sheme}
+my_ctrl_roc <- trainControl(method = 'repeatedcv', number = 5, repeats = 5,
+                            summaryFunction = twoClassSummary,
+                            classProbs = TRUE,
+                            savePredictions = TRUE)
+
+my_metrics_roc <- "ROC"
+```
+
+```{r,class_mod1_roc_x,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod1_logis_addtive_roc <- caret::train(outcome ~ .,data = ready_x_B, method = "glm", 
+             family = "binomial",metric = my_metrics_roc, trControl = my_ctrl_roc, preProcess=c('center', 'scale'))
+```
+
+```{r,class_mod2_x_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod2_logis_pairwise_roc <- caret::train(outcome ~ .^2,data = ready_x_B, method = "glm", 
+             family = "binomial", trControl = my_ctrl_roc, metric=my_metrics_roc,preProcess=c('center', 'scale'))
+```
+
+
+```{r,class_mod3_x_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod3_elastic_roc <- caret::train(outcome ~.^2,data=ready_x_B,method='glmnet',family = "binomial", trControl=my_ctrl_roc, metric=my_metrics_roc, preProcess=c('center', 'scale'))
+```
+
+
+```{r,class_mod4_x_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod4_elastic_roc <- caret::train(outcome ~ (x09+I(x09^2))*x11,data=ready_x_B,method='glmnet', family = "binomial",trControl=my_ctrl_roc, metric=my_metrics_roc, preProcess=c('center', 'scale'))
+```
+
+
+```{r,class_mod5_x_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod5_neuralnet_roc <- caret::train(outcome ~ .,data=ready_x_B,method='nnet',trControl=my_ctrl_roc, metric=my_metrics_roc, preProcess=c('center', 'scale'))
+```
+
+
+```{r,class_mod6_x_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod6_randomforest_roc <- caret::train(outcome ~ .,data=ready_x_B,method='rf',trControl=my_ctrl_roc, metric=my_metrics_roc, preProcess=c('center', 'scale'))
+```
+
+
+```{r,class_mod7_x_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod7_GBM_roc <- caret::train(outcome ~ .,data=ready_x_B,method='gbm',trControl=my_ctrl_roc, metric=my_metrics_roc, preProcess=c('center', 'scale'))
+```
+
+
+```{r,class_mod8_x_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod8_knn_roc <- caret::train(outcome ~ .,data=ready_x_B,method='knn',trControl=my_ctrl_roc, metric=my_metrics_roc, preProcess=c('center', 'scale'))
+```
+
+
+```{r,class_mod9_x_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_x_mod9_svm_roc <- caret::train(outcome ~ .,data=ready_x_B,method='svmLinear',trControl=my_ctrl_roc, metric=my_metrics_roc, preProcess=c('center', 'scale'))
+```
+
+```{r, compile_roc_summary}
+all_roc_summary <- resamples(list(mod1=class_x_mod1_logis_addtive_roc,
+                                  mod2=class_x_mod2_logis_pairwise_roc,
+                                  mod3=class_x_mod3_elastic_roc,
+                                  mod4=class_x_mod4_elastic_roc,
+                                  mod5=class_x_mod5_neuralnet_roc,
+                                  mod6=class_x_mod6_randomforest_roc,
+                                  mod7=class_x_mod7_GBM_roc,
+                                  mod8=class_x_mod8_knn_roc,
+                                  mod9=class_x_mod9_svm_roc
+                                  ))
+```
+
+```{r, viz_roc_resample_summary}
+dotplot(all_roc_summary)
+```
+
+```{r,class_mod1_v_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod1_logis_addtive_roc <- train(outcome ~ .,data = ready_v_B, method = "glm", 
+             family = "binomial", trControl = my_ctrl_roc, metric=my_metrics_roc,preProcess=c('center', 'scale'))
+```
+
+
+
+```{r,class_mod2_v_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod2_logis_pairwise_roc <- train(outcome ~ .^2,data = ready_v_B, method = "glm", 
+             family = "binomial", trControl = my_ctrl_roc, metric=my_metrics_roc,preProcess=c('center', 'scale'))
+```
+
+
+
+```{r,class_mod3_v_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod3_elastic_roc <- train(outcome ~ .^2,data = ready_v_B, method = "glmnet", 
+             family = "binomial", trControl = my_ctrl_roc, metric=my_metrics_roc,preProcess=c('center', 'scale'))
+```
+
+
+
+```{r,class_mod4_v_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod4_elastic_roc <- train(outcome ~ (v09+I(v09^2))*v11,data = ready_v_B, method = "glmnet", 
+             family = "binomial", trControl = my_ctrl_roc, metric=my_metrics_roc,preProcess=c('center', 'scale'))
+```
+
+
+
+```{r,class_mod5_v_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod5_neuralnet_roc <- train(outcome ~ .,data = ready_v_B, method = "nnet", 
+             trControl = my_ctrl_roc, metric=my_metrics_roc,preProcess=c('center', 'scale'))
+```
+
+
+
+```{r,class_mod6_v_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod6_rf_roc <- train(outcome ~ .,data = ready_v_B, method = "rf", 
+             trControl = my_ctrl_roc, metric=my_metrics_roc,preProcess=c('center', 'scale'))
+```
+
+
+
+```{r,class_mod7_v_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod7_GBM_roc <- train(outcome ~ .,data = ready_v_B, method = "gbm", 
+             trControl = my_ctrl_roc, metric=my_metrics_roc,preProcess=c('center', 'scale'))
+```
+
+
+
+```{r,class_mod8_v_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod8_knn_roc <- caret::train(outcome ~ .,data=ready_v_B,method='knn',trControl=my_ctrl_roc, metric=my_metrics_roc, preProcess=c('center', 'scale'))
+```
+
+
+
+```{r,reg_mod9_x_roc,message=FALSE,warning=FALSE}
+set.seed(2595)
+class_v_mod9_svm_roc <- caret::train(outcome ~ .,data=ready_v_B,method='svmLinear',trControl=my_ctrl_roc, metric=my_metrics_roc, preProcess=c('center', 'scale'))
+```
+
+```{r, compile_roc_summary2}
+all_roc_summary_2 <- resamples(list(mod1=class_v_mod1_logis_addtive_roc,
+                                  mod2=class_v_mod2_logis_pairwise_roc,
+                                  mod3=class_v_mod3_elastic_roc,
+                                  mod4=class_v_mod4_elastic_roc,
+                                  mod5=class_v_mod5_neuralnet_roc,
+                                  mod6=class_v_mod6_rf_roc,
+                                  mod7=class_v_mod7_GBM_roc,
+                                  mod8=class_v_mod8_knn_roc,
+                                  mod9=class_v_mod9_svm_roc
+                                  ))
+```
+
+```{r, viz_roc_resample_summary_2}
+dotplot(all_roc_summary_2)
+```
+
+according to the accuracy and Roc result, I would like choose mod7 as the best classification model for x variables and mod6 for v variables.
+
+
+## Part 5: Interpretation and optimization
+
+```{r,compare_regeresion_x&v_1}
+summary(RMSE_result$values$`fit_08~RMSE`)
+summary(RMSE_result_2$values$`fit_07~RMSE`)
+```
+
+```{r,compare_regeresion_x&v_2}
+summary(RMSE_result$values$`fit_07~RMSE`)
+summary(RMSE_result_2$values$`fit_06~RMSE`)
+```
+
+```{r,compare_classification_x&v_1}
+summary(acc_results$values$`mod7~Accuracy`)
+summary(acc_results2$values$`mod7~Accuracy`)
+```
+
+```{r,compare_classification_x&v_2}
+summary(acc_results$values$`mod6~Accuracy`)
+summary(acc_results2$values$`mod6~Accuracy`)
+```
+
+```{r,compare_classification_x&v_3}
+summary(all_roc_summary$values$`mod7~ROC`)
+summary(all_roc_summary_2$values$`mod7~ROC`)
+```
+
+```{r,compare_classification_x&v_4}
+summary(all_roc_summary$values$`mod6~ROC`)
+summary(all_roc_summary_2$values$`mod6~ROC`)
+```
+
+Apparently, the use of v instead of x improves the performance of the best regression and classification models.
+
+```{r,load_varImp}
+library(varImp)
+```
+
+
+```{r,x_reg_best}
+caret::varImp(reg_x_mod8_GBM)
+```
+
+
+```{r,v_reg_best}
+caret::varImp(reg_v_mod6_rf)
+```
+
+
+```{r,x_class_best}
+caret::varImp(class_x_mod7_GBM)
+```
+```{r,v_class_best}
+caret::varImp(class_v_mod6_rf)
+```
+
+according to the results above
+(1)x09 is the most important input for both the best x_based regression mod8 and best x_based classification mod7.x11 is the second important input for regression mod8, which is very close to the importance of x09 in the best regression mod8.
+(2)v12 is the most important input for both the best v_based regression mod6 and the best v_based classification mod6. v10 is the second important input for both regression mod6 and classification mod6. The importance of v10 is also very close to v12.
+
+```{r,x09&response_combine}
+combine_x09_response<- ready_x_A %>% select(x09) %>% cbind(reg_x_mod8_GBM_pred)
+#combine_x11_response<- ready_x_A %>% select(x11) %>% cbind(reg_x_mod8_GBM_pred)
+```
+
+```{r,visual_1}
+combine_x09_response %>% ggplot() + geom_point(mapping = aes(x=x09,y=reg_x_mod8_GBM_pred))
+#combine_x11_response %>% ggplot() + geom_point(mapping = aes(x=x11,y=reg_x_mod8_GBM_pred))
+```
+```{r,v12&response_combine}
+combine_v12_response<- ready_v_A %>% select(v12) %>% cbind(reg_v_mod6_rf_pred)
+#combine_v10_response<- ready_v_A %>% select(v10) %>% cbind(reg_v_mod6_rf_pred)
+```
+
+```{r,visual_2}
+combine_v12_response %>% ggplot() + geom_point(mapping = aes(x=v12,y=reg_v_mod6_rf_pred))
+#combine_v10_response %>% ggplot() + geom_point(mapping = aes(x=v10,y=reg_v_mod6_rf_pred))
+```
+
+
+```{r,x09&outcome_combine}
+combine_x09_outcome <- ready_x_A %>% select(x09) %>% cbind(class_x_mod7_GBM_pred_prob$event)
+```
+
+```{r,visual_3}
+combine_x09_outcome %>% ggplot() + geom_point(mapping = aes(x=x09,y=class_x_mod7_GBM_pred_prob$event))
+```
+```{r,v12&outcome_combine}
+combine_v12_outcome <- ready_v_A %>% select(v12) %>% cbind(class_v_mod6_rf_pred_prob$event)
+```
+
+
+```{r,visual_4}
+combine_v12_outcome %>% ggplot() + geom_point(mapping = aes(x=v12,y=class_v_mod6_rf_pred_prob$event))
+```
+```{r,make_variable_sequence}
+make_variable_sequence <- function(xname, xvalues, primary_vars, secondary_vars)
+{
+  if( xname %in% primary_vars ){
+    xrange <- range(xvalues)
+    xvec <- seq(xrange[1], xrange[2], length.out = 1899)
+  } else if ( xname %in% secondary_vars ) {
+    xrange <- range(xvalues)
+    xvec <- seq(xrange[1], xrange[2], length.out = 6)
+  } else {
+    xvec <- median(xvalues)
+  }
+  
+  xvec
+}
+
+make_viz_grid_list <- function(primary_vars, secondary_vars, training_inputs)
+{
+  all_names <- training_inputs %>% names()
+  
+  xlist <- purrr::map2(all_names,
+                       training_inputs,
+                       make_variable_sequence,
+                       primary_vars = primary_vars,
+                       secondary_vars = secondary_vars)
+  
+  names(xlist) <- all_names
+  
+  xlist
+}
+
+```
+
+```{r,viz_grid_list_v10v12}
+viz_grid_list_v10v12 <- make_viz_grid_list(primary_vars = c("v12"),
+                                    secondary_vars = c("v10"),
+                                    training_inputs = ready_v_A %>% select(-response))
+```
+
+```{r,viz_grid_list_x09x11}
+viz_grid_list_x09x11 <- make_viz_grid_list(primary_vars = c("x09"),
+                                    secondary_vars = c("x11"),
+                                    training_inputs = ready_x_A %>% select(-response))
+
+```
+
+```{r, viz_grid_v10&v12}
+viz_grid_v10v12 <- expand.grid(viz_grid_list_v10v12,
+                           KEEP.OUT.ATTRS = FALSE,
+                           stringsAsFactors = FALSE) %>% 
+  as.data.frame() %>% tibble::as_tibble()
+
+```
+
+```{r, viz_grid_x09&x11}
+viz_grid_x09x11 <- expand.grid(viz_grid_list_x09x11,
+                           KEEP.OUT.ATTRS = FALSE,
+                           stringsAsFactors = FALSE) %>% 
+  as.data.frame() %>% tibble::as_tibble()
+
+```
+
+```{r,reg_pred_x09x11}
+reg_x_pred <- predict(reg_x_mod8_GBM, newdata = viz_grid_x09x11)
+viz_grid_x09x11 %>% ggplot()+geom_point(mapping = aes(x=x09,y=reg_x_pred))+facet_grid(~x11,labeller = "label_both")+theme_bw()
+```
+
+```{r,reg_pred_v10v12}
+reg_v_pred <- predict(reg_v_mod6_rf, newdata = viz_grid_v10v12)
+viz_grid_v10v12 %>% ggplot()+geom_point(mapping = aes(x=v12,y=reg_v_pred))+facet_grid(~v10,labeller = "label_both")+theme_bw()
+```
+
+```{r,class_pred_x09x11}
+class_x_pred <- predict(class_x_mod7_GBM, newdata = viz_grid_x09x11,'prob')
+viz_grid_x09x11 %>% ggplot()+geom_point(mapping = aes(x=x09,y=class_x_pred$event))+facet_grid(~x11,labeller = "label_both")+theme_bw()
+```
+
+```{r,class_pred_v10v12}
+class_v_pred <- predict(class_v_mod6_rf, newdata = viz_grid_v10v12,'prob')
+viz_grid_v10v12 %>% ggplot()+geom_point(mapping = aes(x=v12,y=class_v_pred$event))+facet_grid(~v10,labeller = "label_both")+theme_bw()
+```
+
+I choose the most important inputs (x09, v12) and the second important inputs (x11, v10) for creating grid. According to the plot, the result above shows
+(1) The input setting of x for minimizing continuous output is choosing important inputs x09 and x11, and both inputs should be close to 1 to make continuous output minimized. 
+(2) The input setting of v for minimizing continuous output is choosing important inputs v10 and v12, and both inputs should be close to 1 to make continuous output minimized. 
+(3) The input setting of x for minimizing continuous output is choosing important inputs x09 and x11, and both inputs should be close to 0 to make event probability minimized. 
+(4) The input setting of v for minimizing continuous output is choosing important inputs v10 and v12, and both inputs should be close to around 0.2 to make event probability minimized. 
+
+```{r, read_x_holdout}
+holdout_x <- readr::read_csv("holdout_inputs_x.csv", col_names = TRUE)
+```
+
+```{r, read_v_holdout}
+holdout_v <- readr::read_csv("holdout_inputs_v.csv", col_names = TRUE)
+```
+
+```{r,holdout_x_pred_reg}
+predict(reg_x_mod8_GBM,holdout_x)
+```
+```{r,holdout_x_pred_class}
+predict(class_x_mod7_GBM,holdout_x)
+predict(class_x_mod7_GBM,holdout_x,type="prob")
+```
+
+```{r, compile_holdout_preds_x}
+my_preds_x <- tibble::tibble(
+  response = predict(reg_x_mod8_GBM,holdout_x),
+  outcome = predict(class_x_mod7_GBM,holdout_x)) %>% 
+  bind_cols(
+    predict(class_x_mod7_GBM,holdout_x,type="prob") %>% 
+      select(probability = event)) %>% 
+  tibble::rowid_to_column("id")
+```
+
+```{r, save_holdout_preds_csv_x}
+my_preds_x %>% readr::write_csv("my_pred_x.csv", col_names = TRUE)
+```
+
+```{r,holdout_v_pred_reg}
+predict(reg_v_mod6_rf,holdout_v)
+```
+
+```{r,holdout_v_pred_class}
+predict(class_v_mod6_rf,holdout_v)
+predict(class_v_mod6_rf,holdout_v,type="prob")
+```
+
+```{r, compile_holdout_preds_v}
+my_preds_v <- tibble::tibble(
+  response = predict(reg_v_mod6_rf,holdout_v),
+  outcome = predict(class_v_mod6_rf,holdout_v)) %>% 
+  bind_cols(
+    predict(class_v_mod6_rf,holdout_v,type="prob") %>% 
+      select(probability = event)) %>% 
+  tibble::rowid_to_column("id")
+```
+
+```{r, save_holdout_preds_csv_v}
+my_preds_v %>% readr::write_csv("my_pred_v.csv", col_names = TRUE)
+```
+
+
